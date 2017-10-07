@@ -1,7 +1,7 @@
 import Foundation
 
 internal enum CompletionResult {
-    case success(result: [Dictionary<String, String>])
+    case success(result: [Array<String>])
     case failure(message: String)
     
     func asJSON() -> Data? {

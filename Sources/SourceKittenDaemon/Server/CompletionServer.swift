@@ -56,21 +56,35 @@ public class CompletionServer {
                   let offset = Int(offsetString) else {
                 throw Abort.custom(
                   status: .badRequest,
-                  message: "{\"error\": \"Need X-Offset as completion offset for completion\"}"
+                  message: "{\"error\": \"Need X-Offset\"}"
                 )
             }
 
             guard let path = request.headers["X-Path"] else {
                 throw Abort.custom(
                   status: .badRequest,
-                  message: "{\"error\": \"Need X-Path as path to the temporary buffer\"}"
+                  message: "{\"error\": \"Need X-Path\"}"
                 )
             }
             
             guard let cacheKey = request.headers["X-Cachekey"] else {
                 throw Abort.custom(
                     status: .badRequest,
-                    message: "{\"error\": \"Need X-Cachekey as path to the temporary buffer\"}"
+                    message: "{\"error\": \"Need X-Cachekey\"}"
+                )
+            }
+            
+            guard let prefixString = request.headers["X-Prefix"] else {
+                throw Abort.custom(
+                    status: .badRequest,
+                    message: "{\"error\": \"Need X-Prefix\"}"
+                )
+            }
+            
+            guard let type = request.headers["X-Type"], let typeInt = Int(type) else {
+                throw Abort.custom(
+                    status: .badRequest,
+                    message: "{\"error\": \"Need X-Type\"}"
                 )
             }
             
@@ -82,7 +96,7 @@ public class CompletionServer {
             print("[HTTP] GET /complete X-Offset:\(offset) X-Path:\(path) cacheKey:\(cacheKey)")
 
             let url = URL(fileURLWithPath: path)
-            let result = self.completer.complete(url, offset: offset)
+            let result = self.completer.complete(url, offset: offset, prefixString: prefixString, type: Completer.CompleteType(rawValue: typeInt)!)
             
             switch result {
             case .success(result: _):

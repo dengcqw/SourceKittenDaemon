@@ -57,7 +57,12 @@ class Completer {
         self.project = try project.reissue()
     }
     
-    func complete(_ url: URL, offset: Int, prefixString: String = "") -> CompletionResult {
+    enum CompleteType : Int {
+        case ThisClass = 0
+        case SuperClass
+    }
+    
+    func complete(_ url: URL, offset: Int, prefixString: String? = nil, type:CompleteType = .ThisClass) -> CompletionResult {
         let path = url.path
 
         guard let file = File(path: path) 
@@ -96,42 +101,62 @@ class Completer {
       
         let response = CodeCompletionItem.parse(response: request.send())
         
-        typealias ResultType = [Dictionary<String, String>]
+        typealias ResultType = [Array<String>]
         var samePrefixItem:ResultType = []
         var prjItem:ResultType = []
         var UIKitItem:ResultType = []
         var FDItem:ResultType = []
         var CGItem:ResultType = []
         var Others:ResultType = []
-        
-        for item in response {
-            if let sourceText = item.sourcetext, sourceText.hasPrefix(prefixString) {
-                samePrefixItem.append(item.simpleDictionary())
-                continue
+
+        var results:ResultType = []
+        if type == .ThisClass {
+            for item in response {
+                if item.context.hasSuffix("thisclass") {
+                    results.append(item.simpleValue())
+                }
             }
-            guard let moduleName = item.moduleName else {
-                continue
+        } else if type == .SuperClass {
+            for item in response {
+                if item.context.hasSuffix("superclass") {
+                    results.append(item.simpleValue())
+                }
             }
-            if moduleName.hasPrefix(self.project.moduleName) {
-                prjItem.append(item.simpleDictionary())
-            } else if moduleName.hasPrefix("UI") {
-                UIKitItem.append(item.simpleDictionary())
-            } else if moduleName.hasPrefix("NS") {
-                FDItem.append(item.simpleDictionary())
-            } else if moduleName.hasPrefix("CG") {
-                CGItem.append(item.simpleDictionary())
-            } else {
-                Others.append(item.simpleDictionary())
+        } else if let prefixString = prefixString {
+            for item in response {
+                if let sourceText = item.sourcetext,
+                    sourceText.hasPrefix(prefixString) {
+                    results.append(item.simpleValue())
+                    continue
+                }
+    //            guard let moduleName = item.moduleName else {
+    //                continue
+    //            }
+    //            if moduleName.hasPrefix(self.project.moduleName) {
+    //                prjItem.append(item.simpleValue())
+    //            } else if moduleName.hasPrefix("UI") {
+    //                UIKitItem.append(item.simpleValue())
+    //            } else if moduleName.hasPrefix("NS") {
+    //                FDItem.append(item.simpleValue())
+    //            } else if moduleName.hasPrefix("CG") {
+    //                CGItem.append(item.simpleValue())
+    //            } else {
+    //                Others.append(item.simpleValue())
+    //            }
             }
         }
-        var results:ResultType = []
-        results.append(contentsOf: samePrefixItem)
-        results.append(contentsOf: prjItem)
-        results.append(contentsOf: UIKitItem)
-        results.append(contentsOf: FDItem)
-        results.append(contentsOf: CGItem)
-        results.append(contentsOf: Others)
-
+        
+//        results.append(contentsOf: Others)
+//        results.append(contentsOf: CGItem)
+//        results.append(contentsOf: FDItem)
+//        results.append(contentsOf: UIKitItem)
+//        results.append(contentsOf: prjItem)
+//        results.append(contentsOf: samePrefixItem)
+        
+        results.append(contentsOf: results)
+    
+        print("\(samePrefixItem.count) \(prjItem.count) \(UIKitItem.count) \(FDItem.count) \(CGItem.count) \(Others.count)")
+        print("\(results)")
         return .success(result: results)
     }
     
@@ -144,7 +169,7 @@ class Completer {
 }
 
 extension CodeCompletionItem {
-    func simpleDictionary() -> Dictionary<String, String> {
-        return ["sourcetext": self.sourcetext!, "name": self.name!]
+    func simpleValue() -> Array<String> {
+        return [self.sourcetext!, self.name!]
     }
 }
