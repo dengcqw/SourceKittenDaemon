@@ -57,7 +57,7 @@ class Completer {
         self.project = try project.reissue()
     }
     
-    func complete(_ url: URL, offset: Int) -> CompletionResult {
+    func complete(_ url: URL, offset: Int, prefixString: String = "") -> CompletionResult {
         let path = url.path
 
         guard let file = File(path: path) 
@@ -66,8 +66,8 @@ class Completer {
         let frameworkSearchPaths: [String] = project.frameworkSearchPaths.reduce([]) { $0 + ["-F", $1] }
         let customSwiftCompilerFlags: [String] = project.customSwiftCompilerFlags
 
-        let preprocessorFlags: [String] = project.gccPreprocessorDefinitions
-            .reduce([]) { $0 + ["-Xcc", "-D\($1)"] }
+//        let preprocessorFlags: [String] = project.gccPreprocessorDefinitions
+//            .reduce([]) { $0 + ["-Xcc", "-D\($1)"] }
 
         let sourceFiles: [String] = self.sourceFiles()
 
@@ -81,7 +81,7 @@ class Completer {
 
         compilerArgs = compilerArgs + frameworkSearchPaths
         compilerArgs = compilerArgs + customSwiftCompilerFlags
-        compilerArgs = compilerArgs + preprocessorFlags
+//        compilerArgs = compilerArgs + preprocessorFlags
         compilerArgs = compilerArgs + ["-c"]
         compilerArgs = compilerArgs + [path]
         compilerArgs = compilerArgs + ["-j4"]
@@ -96,7 +96,43 @@ class Completer {
       
         let response = CodeCompletionItem.parse(response: request.send())
         
-        return .success(result: response)
+        typealias ResultType = [Dictionary<String, String>]
+        var samePrefixItem:ResultType = []
+        var prjItem:ResultType = []
+        var UIKitItem:ResultType = []
+        var FDItem:ResultType = []
+        var CGItem:ResultType = []
+        var Others:ResultType = []
+        
+        for item in response {
+            if let sourceText = item.sourcetext, sourceText.hasPrefix(prefixString) {
+                samePrefixItem.append(item.simpleDictionary())
+                continue
+            }
+            guard let moduleName = item.moduleName else {
+                continue
+            }
+            if moduleName.hasPrefix(self.project.moduleName) {
+                prjItem.append(item.simpleDictionary())
+            } else if moduleName.hasPrefix("UI") {
+                UIKitItem.append(item.simpleDictionary())
+            } else if moduleName.hasPrefix("NS") {
+                FDItem.append(item.simpleDictionary())
+            } else if moduleName.hasPrefix("CG") {
+                CGItem.append(item.simpleDictionary())
+            } else {
+                Others.append(item.simpleDictionary())
+            }
+        }
+        var results:ResultType = []
+        results.append(contentsOf: samePrefixItem)
+        results.append(contentsOf: prjItem)
+        results.append(contentsOf: UIKitItem)
+        results.append(contentsOf: FDItem)
+        results.append(contentsOf: CGItem)
+        results.append(contentsOf: Others)
+
+        return .success(result: results)
     }
     
     func sourceFiles() -> [String] {
@@ -105,4 +141,10 @@ class Completer {
                                     .filter({ $0 != nil }).map({ $0! })
     }
     
+}
+
+extension CodeCompletionItem {
+    func simpleDictionary() -> Dictionary<String, String> {
+        return ["sourcetext": self.sourcetext!, "name": self.name!]
+    }
 }

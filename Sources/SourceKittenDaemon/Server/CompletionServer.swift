@@ -8,6 +8,7 @@
 
 import Foundation
 import Vapor
+import HTTP
 
 /**
 This runs a simple webserver that can be queried from Emacs to get completions
@@ -17,8 +18,11 @@ public class CompletionServer {
 
     let port: Int
     let completer: Completer
+    
+    var caches: [String: String] = [:]
+    var cacheKeys: [String] = []
 
-    let droplet = Droplet(arguments: ["vapor", "serve"])
+    let droplet = try! Droplet.init(config: Config.init(arguments: ["vapor", "serve"], absoluteDirectory: nil), router: nil, server: nil)
 
     public init(project: Project, port: Int) {
         self.completer = Completer(project: project)
@@ -62,15 +66,34 @@ public class CompletionServer {
                   message: "{\"error\": \"Need X-Path as path to the temporary buffer\"}"
                 )
             }
+            
+            guard let cacheKey = request.headers["X-Cachekey"] else {
+                throw Abort.custom(
+                    status: .badRequest,
+                    message: "{\"error\": \"Need X-Cachekey as path to the temporary buffer\"}"
+                )
+            }
+            
+            if let resultString = self.caches[cacheKey] {
+                print("target caches \(cacheKey)")
+                return resultString
+            }
 
-            print("[HTTP] GET /complete X-Offset:\(offset) X-Path:\(path)")
+            print("[HTTP] GET /complete X-Offset:\(offset) X-Path:\(path) cacheKey:\(cacheKey)")
 
             let url = URL(fileURLWithPath: path)
             let result = self.completer.complete(url, offset: offset)
-
+            
             switch result {
             case .success(result: _):
-                return result.asJSONString()!
+                let resultString = result.asJSONString()
+                self.caches[cacheKey] = resultString
+                self.cacheKeys.append(cacheKey)
+                if self.cacheKeys.count > 5 {
+                    let key = self.cacheKeys.removeFirst()
+                    self.caches.removeValue(forKey: key)
+                }
+                return resultString
             case .failure(message: let msg):
                 throw Abort.custom(
                   status: .badRequest,
@@ -81,7 +104,16 @@ public class CompletionServer {
     }
 
     public func start() {
-        droplet.run(servers: ["default": (host: "0.0.0.0", port: port, securityLayer: .none)])
+        do {
+            try droplet.run()
+        } catch {
+            
+        }
     }
+}
 
+extension Abort {
+    static func custom(status: Status, message: String) -> Abort {
+        return Abort.init(.badRequest, metadata: nil, reason: message)
+    }
 }
