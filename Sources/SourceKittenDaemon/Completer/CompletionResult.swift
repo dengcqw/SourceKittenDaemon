@@ -15,4 +15,5 @@ internal enum CompletionResult {
         guard let data = self.asJSON() else { return "" }
         return String(data: data, encoding: String.Encoding.utf8) ?? ""
     }
+
 }

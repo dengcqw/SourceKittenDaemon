@@ -19,11 +19,11 @@ public class CompletionServer {
     let port: Int
     let completer: Completer
     
-    var caches: [String: String] = [:]
+    var caches: [String: ResultType] = [:]
     var cacheKeys: [String] = []
 
     let droplet = try! Droplet.init(config: Config.init(arguments: ["vapor", "serve"], absoluteDirectory: nil), router: nil, server: nil)
-
+    
     public init(project: Project, port: Int) {
         self.completer = Completer(project: project)
         self.port = port
@@ -67,7 +67,7 @@ public class CompletionServer {
                 )
             }
             
-            guard let cacheKey = request.headers["X-Cachekey"] else {
+            guard let _cacheKey = request.headers["X-Cachekey"] else {
                 throw Abort.custom(
                     status: .badRequest,
                     message: "{\"error\": \"Need X-Cachekey\"}"
@@ -88,26 +88,34 @@ public class CompletionServer {
                 )
             }
             
-            if let resultString = self.caches[cacheKey] {
+            print("[HTTP] GET /complete \(request.headers)")
+            
+            let completeType = CompleteType(rawValue: typeInt) ?? .ThisClass
+            let cacheKey = offsetString + path + _cacheKey
+            if let cache = self.caches[cacheKey] {
                 print("target caches \(cacheKey)")
-                return resultString
+                return cache.filter(withType: completeType, prefixString: prefixString).asJSONString()
             }
 
-            print("[HTTP] GET /complete X-Offset:\(offset) X-Path:\(path) cacheKey:\(cacheKey)")
-
             let url = URL(fileURLWithPath: path)
-            let result = self.completer.complete(url, offset: offset, prefixString: prefixString, type: Completer.CompleteType(rawValue: typeInt)!)
-            
+            let result = self.completer.complete(url, offset: offset)
             switch result {
-            case .success(result: _):
-                let resultString = result.asJSONString()
-                self.caches[cacheKey] = resultString
-                self.cacheKeys.append(cacheKey)
-                if self.cacheKeys.count > 5 {
-                    let key = self.cacheKeys.removeFirst()
-                    self.caches.removeValue(forKey: key)
+            case .success(result: let result):
+                let filtered = result.filter(withType: completeType, prefixString: prefixString)
+                if filtered.count > 0 {
+                    self.caches[cacheKey] = result
+                    self.cacheKeys.append(cacheKey)
+                    if self.cacheKeys.count > 5 {
+                        let key = self.cacheKeys.removeFirst()
+                        self.caches.removeValue(forKey: key)
+                    }
+                    return filtered.asJSONString()
+                } else {
+                    throw Abort.custom(
+                        status: .badRequest,
+                        message: "{\"error\": empty\"}"
+                    )
                 }
-                return resultString
             case .failure(message: let msg):
                 throw Abort.custom(
                   status: .badRequest,
@@ -129,5 +137,53 @@ public class CompletionServer {
 extension Abort {
     static func custom(status: Status, message: String) -> Abort {
         return Abort.init(.badRequest, metadata: nil, reason: message)
+    }
+}
+
+typealias ResultType = [Array<String>]
+enum CompleteType : Int {
+    case ThisClass = 0
+    case SuperClass = 1
+}
+
+extension Array where Element == Array<String> {
+    func filter(withType type: CompleteType, prefixString:String = "") -> ResultType {
+        var filtered:ResultType = []
+        if prefixString != "" {
+            for item in self {
+                if let sourceText = item.first,
+                    sourceText.hasPrefix(prefixString) {
+                    filtered.append(item)
+                    continue
+                }
+            }
+        } else
+        if type == .ThisClass {
+            for item in self {
+                if !item[1].hasSuffix("sp") {
+                    filtered.append(item)
+                }
+            }
+        } else
+        if type == .SuperClass {
+            for (index, item) in self.reversed().enumerated() {
+                if item[1].hasSuffix("sp") {
+                    filtered.append(item)
+                    if index > 100 { //   if need too much?
+                        break
+                    }
+                }
+            }
+        }
+
+        print("filter item count \(filtered.count)")
+        return filtered
+    }
+    
+    func asJSONString() -> String {  // format for vim
+        let itemsString = self.map { (item) -> String in
+            return "{'word':'\(item[0])', 'abbr':'\(item[1])'},"
+        }.joined()
+        return "[\(itemsString)]"
     }
 }

@@ -57,12 +57,9 @@ class Completer {
         self.project = try project.reissue()
     }
     
-    enum CompleteType : Int {
-        case ThisClass = 0
-        case SuperClass
-    }
+
     
-    func complete(_ url: URL, offset: Int, prefixString: String? = nil, type:CompleteType = .ThisClass) -> CompletionResult {
+    func complete(_ url: URL, offset: Int) -> CompletionResult {
         let path = url.path
 
         guard let file = File(path: path) 
@@ -100,64 +97,8 @@ class Completer {
                           arguments: compilerArgs)
       
         let response = CodeCompletionItem.parse(response: request.send())
-        
-        typealias ResultType = [Array<String>]
-        var samePrefixItem:ResultType = []
-        var prjItem:ResultType = []
-        var UIKitItem:ResultType = []
-        var FDItem:ResultType = []
-        var CGItem:ResultType = []
-        var Others:ResultType = []
-
-        var results:ResultType = []
-        if type == .ThisClass {
-            for item in response {
-                if item.context.hasSuffix("thisclass") {
-                    results.append(item.simpleValue())
-                }
-            }
-        } else if type == .SuperClass {
-            for item in response {
-                if item.context.hasSuffix("superclass") {
-                    results.append(item.simpleValue())
-                }
-            }
-        } else if let prefixString = prefixString {
-            for item in response {
-                if let sourceText = item.sourcetext,
-                    sourceText.hasPrefix(prefixString) {
-                    results.append(item.simpleValue())
-                    continue
-                }
-    //            guard let moduleName = item.moduleName else {
-    //                continue
-    //            }
-    //            if moduleName.hasPrefix(self.project.moduleName) {
-    //                prjItem.append(item.simpleValue())
-    //            } else if moduleName.hasPrefix("UI") {
-    //                UIKitItem.append(item.simpleValue())
-    //            } else if moduleName.hasPrefix("NS") {
-    //                FDItem.append(item.simpleValue())
-    //            } else if moduleName.hasPrefix("CG") {
-    //                CGItem.append(item.simpleValue())
-    //            } else {
-    //                Others.append(item.simpleValue())
-    //            }
-            }
-        }
-        
-//        results.append(contentsOf: Others)
-//        results.append(contentsOf: CGItem)
-//        results.append(contentsOf: FDItem)
-//        results.append(contentsOf: UIKitItem)
-//        results.append(contentsOf: prjItem)
-//        results.append(contentsOf: samePrefixItem)
-        
-        results.append(contentsOf: results)
-    
-        print("\(samePrefixItem.count) \(prjItem.count) \(UIKitItem.count) \(FDItem.count) \(CGItem.count) \(Others.count)")
-        print("\(results)")
-        return .success(result: results)
+        print("complete item count \(response.count)")
+        return .success(result: response.map{$0.simpleValue()})
     }
     
     func sourceFiles() -> [String] {
@@ -165,11 +106,16 @@ class Completer {
             .map({ (o: ProjectObject) -> String? in o.relativePath.absoluteURL(forProject: project)?.path })
                                     .filter({ $0 != nil }).map({ $0! })
     }
-    
 }
 
 extension CodeCompletionItem {
     func simpleValue() -> Array<String> {
-        return [self.sourcetext!, self.name!]
+        var name = ""
+        if self.context.hasSuffix("thisclass") {
+            name = self.name!
+        } else {
+            name = "\(self.name!) - sp"
+        }
+        return [self.sourcetext!, name]
     }
 }
