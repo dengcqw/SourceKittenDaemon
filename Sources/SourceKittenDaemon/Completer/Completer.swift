@@ -73,7 +73,6 @@ class Completer {
 
         let sourceFiles: [String] = self.sourceFiles()
 
-        // Ugly mutation because `[] + [..] + [..] + [..]` = 'Too complex to solve in reasonable time'
         var compilerArgs: [String] = []
         compilerArgs = compilerArgs + ["-module-name", project.moduleName]
         compilerArgs = compilerArgs + ["-sdk", project.sdkRoot]

@@ -88,7 +88,7 @@ public class CompletionServer {
                 )
             }
             
-            print("[HTTP] GET /complete \(request.headers)")
+            print("[HTTP] GET /complete \(request.headers)\n")
             
             let completeType = CompleteType(rawValue: typeInt) ?? .ThisClass
             let cacheKey = offsetString + path + _cacheKey
@@ -98,7 +98,9 @@ public class CompletionServer {
             }
 
             let url = URL(fileURLWithPath: path)
+            let date = Date()
             let result = self.completer.complete(url, offset: offset)
+            print("complete time: \(date.timeIntervalSinceNow)")
             switch result {
             case .success(result: let result):
                 let filtered = result.filter(withType: completeType, prefixString: prefixString)
