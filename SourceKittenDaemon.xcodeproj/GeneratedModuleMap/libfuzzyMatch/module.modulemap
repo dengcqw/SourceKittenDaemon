@@ -1,0 +1,4 @@
+module libfuzzyMatch {
+    umbrella "/Users/dengjinlong/Documents/swift-complete/SourceKittenDaemon/Sources/libfuzzyMatch/include"
+    export *
+}

@@ -9,6 +9,8 @@
 import Foundation
 import Commandant
 import SourceKittenDaemon
+import libfuzzyMatch
+
 
 let registry = CommandRegistry<CommandError>()
 registry.register(StartCommand())
@@ -19,3 +21,4 @@ registry.register(helpCommand)
 registry.main(defaultVerb: "help") { error in
     fputs("\(error)\n", stderr)
 }
+

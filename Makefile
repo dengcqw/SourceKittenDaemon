@@ -30,7 +30,7 @@ test:
 	FIXTURE_PROJECT_FILE_PATH="$(ROOT_DIR)/Tests/SourceKittenDaemonTests/Fixtures/Project/Fixture.xcodeproj" \
 	swift test
 
-SourceKittenDaemon.pkg: $(DIST)$(BINARIES_FOLDER)/sourcekittendaemon $(DIST)$(LIB_FOLDER)/libCYaml.dylib $(DIST)$(LIB_FOLDER)/libCLibreSSL.dylib
+SourceKittenDaemon.pkg: $(DIST)$(BINARIES_FOLDER)/sourcekittendaemon 
 	pkgbuild \
 		--identifier "$(IDENTIFIER)" \
 		--root "$(DIST)" \
@@ -45,9 +45,6 @@ $(DIST)$(BINARIES_FOLDER)/sourcekittendaemon: $(BUILD)/release/sourcekittend
 $(DIST)$(LIB_FOLDER)/%.dylib: $(BUILD)/release/%.dylib
 	mkdir -p $(@D)
 	cp $< $@
-
-$(BUILD)/release/libCYaml.dylib: $(BUILD)/release/sourcekittend
-$(BUILD)/release/libCLibreSSL.dylib: $(BUILD)/release/sourcekittend
 
 $(BUILD)/release/sourcekittend: $(SRC_FILES)
 	mkdir -p $(@D)

@@ -34,9 +34,13 @@ struct StartCommand: CommandProtocol {
               target: options.target.isEmpty ? nil : options.target,
               configuration: options.configuration)
 
-            let server = CompletionServer(project: project, port: options.port)
-            server.start()
-            return .success()
+            do {
+                let server = try CompletionServer(project: project, port: options.port)
+                try server.start()
+                return .success()
+            } catch let error {
+                return Result.failure(CommandError.other(error))
+            }
         } catch (let e as ProjectError) {
             return .failure(.project(e))
         } catch (_) {
@@ -82,7 +86,7 @@ struct StartOptions: OptionsProtocol {
                             usage: "The configuration to use")
 
             <*> m <| Option(key: "port",
-                            defaultValue: 8081,
+                            defaultValue: 8080,
                             usage: "The port to start on")
     }
 
@@ -94,12 +98,14 @@ enum CommandError: Error, CustomStringConvertible {
     case invalidArgument(description: String)
     case project(ProjectError)
     case unknown
+    case other(Error)
 
     /// An error message corresponding to this error.
     var description: String {
         switch self {
         case .invalidArgument(let description): return description
         case .project(let e): return e.description
+        case .other(let e): return "\(e)"
         default: return "An unknown error occured"
         }
     }

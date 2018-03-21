@@ -9,6 +9,74 @@
 import Foundation
 import SourceKittenFramework
 
+#if os(Linux)
+import FileSystemWatcher
+#endif
+
+private func pingSKD() {
+    NotificationCenter.default.post(name: Notification.Name(rawValue: "skdrefresh"), object: nil)
+}
+
+class FileSystemEventsWrapper {
+
+
+    #if os(Linux)
+
+        func pingAux(event: FileSystemEvent) {
+            pingSKD()
+        }
+
+        let myWatcher : FileSystemWatcher
+
+        public init(delay: Int, paths toWatch: [String]) {
+
+            myWatcher = FileSystemWatcher(deferringDelay: Double(delay))
+
+            myWatcher.watch(
+                paths: toWatch, 
+                for: [FileSystemEventType.inAllEvents],
+                thenInvoke: pingAux)
+
+            myWatcher.start()
+        }
+
+        deinit {
+            myWatcher.stop()
+        }
+            
+    #else
+
+        let eventStream: FSEventStreamRef
+
+        public init(delay: Int, paths toWatch: [String]) {
+
+            self.eventStream = FSEventStreamCreate(
+                kCFAllocatorDefault, { (_, _, _, _, _, _)  in
+                    pingSKD()
+                },
+                nil,
+                toWatch as CFArray,
+                FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+                CFTimeInterval(delay),
+                FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer))!
+          
+            let runLoop = RunLoop.main
+
+            FSEventStreamScheduleWithRunLoop(eventStream,
+                                             runLoop.getCFRunLoop(),
+                                             RunLoopMode.defaultRunLoopMode as CFString)
+            
+            FSEventStreamStart(eventStream)
+        }
+
+        deinit {
+            FSEventStreamInvalidate(eventStream)
+        }
+
+    #endif 
+
+}
+
 /**
 This keeps the connection to the XPC via SourceKitten and is being called
 from the Completion Server to perform completions. */
@@ -17,47 +85,61 @@ class Completer {
     // The project parser
     var project: Project
 
+    var compilerArgs: [String] = []
+
     // Need to monitor changes to the .pbxproject and re-fetch
     // project settings.
-    let eventStream: FSEventStreamRef
+    let fsEventWrapper : FileSystemEventsWrapper
     
     init(project: Project) {
         self.project = project
-      
-        self.eventStream = FSEventStreamCreate(
-                kCFAllocatorDefault,
-                { (_) in NotificationCenter.default.post(name: Notification.Name(rawValue: "skdrefresh"), object: nil) },
-                nil,
-                [project.projectFile.path] as CFArray,
-                FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
-                2,
-                FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer))!
-      
-        let runLoop = RunLoop.main
-        FSEventStreamScheduleWithRunLoop(eventStream,
-                                         runLoop.getCFRunLoop(),
-                                         RunLoopMode.defaultRunLoopMode as CFString)
-        FSEventStreamStart(eventStream)
+
+        self.fsEventWrapper = FileSystemEventsWrapper(delay: 2, paths: [project.projectFile.path])
 
         print("[INFO] Monitoring \(project.projectFile.path) for changes")
-        NotificationCenter.default.addObserver(
-          forName: NSNotification.Name(rawValue: "skdrefresh"), object: nil, queue: nil) { _ in
+        NotificationCenter.default.addObserver(forName: NSNotification.Name(rawValue: "skdrefresh"), object: nil, queue: nil) { _ in
             print("[INFO] Refreshing project due to change in: \(project.projectFile.path)")
             do { try self.refresh() }
             catch (let e as CustomStringConvertible) { print("[ERR] Refresh failed: \(e.description)") }
             catch (_) { print("[ERR] Refresh failed: unknown reason") }
         }
+        
+        updateArgs()
     }
 
     deinit {
-        FSEventStreamInvalidate(eventStream)
+        
     }
 
     func refresh() throws {
         self.project = try project.reissue()
+        updateArgs()
     }
     
-
+    func updateArgs() {
+        let frameworkSearchPaths: [String] = project.frameworkSearchPaths.reduce([]) { $0 + ["-F", $1] }
+        let customSwiftCompilerFlags: [String] = project.customSwiftCompilerFlags
+        
+        let preprocessorFlags: [String] = project.gccPreprocessorDefinitions
+            .reduce([]) { $1.trimmingCharacters(in: CharacterSet.whitespaces) == "" ? $0 : $0 + ["-Xcc", "-D\($1)"] }
+        
+        let sourceFiles: [String] = self.sourceFiles()
+        
+        compilerArgs = []
+        compilerArgs = compilerArgs + ["-module-name", project.moduleName]
+        compilerArgs = compilerArgs + ["-sdk", project.sdkRoot]
+        
+        if let platformTarget = project.platformTarget {
+            compilerArgs = compilerArgs + ["-target", platformTarget]
+        }
+        
+        compilerArgs = compilerArgs + frameworkSearchPaths
+        compilerArgs = compilerArgs + customSwiftCompilerFlags
+        compilerArgs = compilerArgs + preprocessorFlags
+        compilerArgs = compilerArgs + ["-c"]
+        compilerArgs = compilerArgs + ["-j4"]
+        compilerArgs = compilerArgs + sourceFiles
+    }
     
     func complete(_ url: URL, offset: Int) -> CompletionResult {
         let path = url.path
@@ -65,39 +147,18 @@ class Completer {
         guard let file = File(path: path) 
             else { return .failure(message: "Could not read file") }
 
-        let frameworkSearchPaths: [String] = project.frameworkSearchPaths.reduce([]) { $0 + ["-F", $1] }
-        let customSwiftCompilerFlags: [String] = project.customSwiftCompilerFlags
-
-//        let preprocessorFlags: [String] = project.gccPreprocessorDefinitions
-//            .reduce([]) { $0 + ["-Xcc", "-D\($1)"] }
-
-        let sourceFiles: [String] = self.sourceFiles()
-
-        var compilerArgs: [String] = []
-        compilerArgs = compilerArgs + ["-module-name", project.moduleName]
-        compilerArgs = compilerArgs + ["-sdk", project.sdkRoot]
-
-        if let platformTarget = project.platformTarget
-            { compilerArgs = compilerArgs + ["-target", platformTarget] }
-
-        compilerArgs = compilerArgs + frameworkSearchPaths
-        compilerArgs = compilerArgs + customSwiftCompilerFlags
-//        compilerArgs = compilerArgs + preprocessorFlags
-        compilerArgs = compilerArgs + ["-c"]
-        compilerArgs = compilerArgs + [path]
-        compilerArgs = compilerArgs + ["-j4"]
-        compilerArgs = compilerArgs + sourceFiles
-
+        var compilerArgsCopy = compilerArgs
+        compilerArgsCopy = compilerArgsCopy + [path]
         let contents = file.contents
         let request = Request.codeCompletionRequest(
                           file: path,
                           contents: contents,
                           offset: Int64(offset),
-                          arguments: compilerArgs)
+                          arguments: compilerArgsCopy)
       
         let response = CodeCompletionItem.parse(response: request.send())
-        print("complete item count \(response.count)")
-        return .success(result: response.map{$0.simpleValue()})
+        
+        return .success(result: response)
     }
     
     func sourceFiles() -> [String] {
@@ -105,16 +166,5 @@ class Completer {
             .map({ (o: ProjectObject) -> String? in o.relativePath.absoluteURL(forProject: project)?.path })
                                     .filter({ $0 != nil }).map({ $0! })
     }
-}
-
-extension CodeCompletionItem {
-    func simpleValue() -> Array<String> {
-        var name = ""
-        if self.context.hasSuffix("thisclass") {
-            name = self.name!
-        } else {
-            name = "\(self.name!) - sp"
-        }
-        return [self.sourcetext!, name]
-    }
+    
 }
