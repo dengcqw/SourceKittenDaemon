@@ -43,12 +43,13 @@ public class CompletionServer {
         loop.runForever()
     }
 
-    private func requestHandler(environ: [String: Any], startResponse: ((String, [(String, String)]) -> Void), sendBody: ((Data) -> Void)) {
+    private func requestHandler(environ: [String: Any], startResponse: @escaping ((String, [(String, String)]) -> Void), sendBody: @escaping ((Data) -> Void)) {
         do {
-            let returnResult = try routeRequest(environ: environ)
-            startResponse("200 OK", [])
-            sendBody(Data(returnResult.utf8))
-            sendBody(Data())
+            try routeRequest(environ: environ) { (returnResult) in
+                startResponse("200 OK", [])
+                sendBody(Data(returnResult.utf8))
+                sendBody(Data())
+            }
         } catch Abort.custom(status: let status, message: let message) {
             startResponse("\(status) BAD REQUEST", [])
             sendBody(Data(message.utf8))
@@ -60,7 +61,7 @@ public class CompletionServer {
         }
     }
     
-    private func routeRequest(environ: [String: Any]) throws -> String {
+    private func routeRequest(environ: [String: Any], response:@escaping (String) -> Void) throws {
         let routes = [
             "/ping": servePing,
             "/project": serveProject,
@@ -76,7 +77,7 @@ public class CompletionServer {
                 )
         }
         
-        return try route(environ)
+        try route(environ, response)
     }
 }
 
@@ -84,15 +85,15 @@ public class CompletionServer {
  Concrete implementation of the calls
  */
 extension CompletionServer {
-    func servePing(environ: [String: Any]) throws -> String {
-        return "OK"
+    func servePing(environ: [String: Any], response:(String) -> Void) throws {
+        response("OK")
     }
     
-    func serveProject(environ: [String: Any]) throws -> String {
-        return self.completer.project.projectFile.path
+    func serveProject(environ: [String: Any], response:(String) -> Void) throws {
+        response(self.completer.project.projectFile.path)
     }
     
-    func serveFiles(environ: [String: Any]) throws -> String {
+    func serveFiles(environ: [String: Any], response:(String) -> Void) throws {
         let files = self.completer.sourceFiles()
         guard let jsonFiles = try? JSONSerialization.data(
             withJSONObject: files,
@@ -104,11 +105,11 @@ extension CompletionServer {
                     message: "{\"error\": \"Could not generate file list\"}"
                 )
         }
-        return filesString
+        response(filesString)
     }
     
-    func serveComplete(environ: [String: Any]) throws -> String {
-        // HTTP is request header default prefix
+    func serveComplete(environ: [String: Any], response:@escaping (String)->Void) throws {
+        // "HTTP" is request header default prefix
         
         print("requseting recv")
         guard let offsetString = environ["HTTP_X_OFFSET"] as? String,
@@ -125,6 +126,14 @@ extension CompletionServer {
                 message: "{\"error\": \"Need X-Path as path to the temporary buffer\"}"
             )
         }
+        
+        guard let _cacheKey = environ["HTTP_X_CACHEKEY"] as? String else {
+            throw Abort.custom(
+                status: 400,
+                message: "{\"error\": \"Need X-Path as path to the temporary buffer\"}"
+            )
+        }
+
 
         guard let prefixString = environ["HTTP_X_PREFIX"] as? String else {
             throw Abort.custom(
@@ -135,22 +144,64 @@ extension CompletionServer {
         
         print("[HTTP] GET /complete X-Offset:\(offset) X-Path:\(path) prefix: \(prefixString)")
         
+        let cacheKey = offsetString + path + _cacheKey
+        if let cache = self.caches[cacheKey] {
+            print("target caches \(cacheKey)")
+            response(cache.filter(prefixString).asJSONString())
+        }
+        
         let url = URL(fileURLWithPath: path)
         let result = self.completer.complete(url, offset: offset)
         
         switch result {
         case .success(result: let items):
-            let filtered = items.filter(prefixString)
-            if filtered.count > 0 {
-//                self.caches[cacheKey] = items
-//                self.cacheKeys.append(cacheKey)
-//                if self.cacheKeys.count > 10 {
-//                    let key = self.cacheKeys.removeFirst()
-//                    self.caches.removeValue(forKey: key)
-//                }
-                return filtered.asJSONString()
+            if items.count > 0 {
+                
+                print("item count \(items.count)")
+                
+                caches[cacheKey] = items
+                cacheKeys.append(cacheKey)
+                if cacheKeys.count > 5 {
+                    let key = cacheKeys.removeFirst()
+                    caches.removeValue(forKey: key)
+                }
+                
+                /* TODO: figure crash reason
+                let queue = DispatchQueue(label: "com.sourcekittend.filter", attributes: .concurrent)
+                var i = 0
+                var endIndex = 0
+
+                let date = Date()
+                var total:[[String: String]] = []
+                while i < items.count {
+                    endIndex = i + 100
+                    if endIndex >= items.count {
+                        endIndex = items.count
+                    }
+                    print("filter \(i) - \(endIndex)")
+                    let subArr = Array(items[i..<endIndex])
+                    queue.async {
+                        let filtered = subArr.filter(prefixString)
+                        total.append(contentsOf: filtered)
+                    }
+                    i = endIndex
+                }
+                queue.async(flags: .barrier) {
+                    print("all work done")
+                    print("complete time: \(date.timeIntervalSinceNow)")
+//                    DispatchQueue.main.async {
+                        print("filter item count \(total.count)")
+                        response(total.asJSONString())
+//                    }
+                }
+ */
+
+                let date = Date()
+                let filtered = items.filter(prefixString)
+                print("complete time: \(date.timeIntervalSinceNow)")
+                response(filtered.asJSONString())
             } else {
-                return "[]"
+                response("[]")
             }
         case .failure(message: let msg):
             throw Abort.custom(
@@ -161,8 +212,6 @@ extension CompletionServer {
     }
 }
 
-typealias ResultType = [Array<String>]
-
 func _getCharPointer(_ string : String) -> UnsafeMutablePointer<Int8> {
     return UnsafeMutablePointer<Int8>(mutating: (string as NSString).utf8String!)
 }
@@ -172,68 +221,41 @@ func _getWeight(_ string: String, patten: UnsafeMutablePointer<PatternContext>) 
 }
 
 extension Array where Element == CodeCompletionItem {
-    func filter(_ prefixString:String = "") -> ResultType {
+    func filter(_ prefixString:String = "") -> [[String: String]] {
         
-        print("item count \(count)")
-        
-        var filtered: ResultType = []
-        let patten = initPattern(_getCharPointer(prefixString), UInt16(prefixString.lengthOfBytes(using: .utf8)))
+        var filtered: [[String: String]] = []
+//        let patten = initPattern(_getCharPointer(prefixString), UInt16(prefixString.lengthOfBytes(using: .utf8)))
         if prefixString != "" {
             for item in self {
-                if let desc = item.descriptionKey {
-                   let weight = _getWeight(desc, patten: patten!)
+//                if let desc = item.descriptionKey {
+//                   let weight = _getWeight(desc, patten: patten!)
                     //print(weight)
-                    if weight > 0.01 {
-                        filtered.append([item.sourcetext ?? "", item.descriptionKey ?? "", ""])
-                    }
-                }
+//                    if weight > 0.01 {
+                        filtered.append(item.vimFormatItem())
+//                    }
+//                }
             }
         } else { // use this class
             print("empty prefix")
             for item in self {
-//                if item.context.hasPrefix("thisclass") {
-                    filtered.append([item.sourcetext ?? "", item.descriptionKey ?? "", ""])
-//                }
+                if item.context.hasSuffix("thisclass") {
+                    filtered.append(item.vimFormatItem())
+                }
             }
         }
 
-        print("filter item count \(filtered.count)")
         return filtered
     }
 }
 
-extension Array where Element == Array<String> {
-//    func filter(withType type: CompleteType, prefixString:String = "") -> ResultType {
-//
-//        var filtered:ResultType = []
-//        if prefixString != "" {
-//            for item in self {
-//                if let sourceText = item.first,
-//                    sourceText.hasPrefix(prefixString) {
-//                    filtered.append(item)
-//                    continue
-//                }
-//            }
-//        } else {
-//            filtered = self
-//        }
-//
-//        print("filter item count \(filtered.count)")
-//        return filtered
-//    }
+extension CodeCompletionItem {
+    func vimFormatItem() -> [String: String] {
+        return ["word":sourcetext ?? "", "abbr":descriptionKey ?? "", "menu":""]
+    }
+}
 
-//    func asJSONString() -> String {  // format for vim
-//        let itemsString = self.map { (item) -> String in
-//            return "{'word':'\(item[0])', 'abbr':'\(item[1])'}"
-//        }.joined()
-//        return "[\(itemsString)]"
-//    }
-    
+extension Array {
     func asJSONString() -> String {
-        let items = self.map { (item) -> [String: String] in
-            return ["word":item[0], "abbr":item[1], "menu":item[2]]
-            }
-
         let toJson : (Any) -> Data = { obj in
             do {
                 return try JSONSerialization.data(withJSONObject: obj, options: [])
@@ -241,17 +263,8 @@ extension Array where Element == Array<String> {
             return Data()
         }
 
-        let data = toJson(items)
+        let data = toJson(self)
         return String.init(data: data, encoding: String.Encoding.utf8) ?? ""
-    }
-}
-
-extension String {
-    func getPrefix() -> String { // if return "", maybe "self.", need search thisclass type
-        if let index = index(where: { $0 == "." || $0 == " " }) {
-            return substring(from: self.index(after: index))
-        }
-        return self
     }
 }
 
