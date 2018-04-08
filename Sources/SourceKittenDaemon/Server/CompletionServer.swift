@@ -196,22 +196,19 @@ extension Array where Element == CodeCompletionItem {
         
         var filtered: [[String: String]] = []
         if prefixString != "" {
-            let patten = initPattern(_getCharPointer(prefixString), UInt16(prefixString.lengthOfBytes(using: .utf8)))
             for item in self {
-//                if let desc = item.descriptionKey, let methodName = desc.split(separator: Character.init("(")).first {
-//                    let weight = _getWeight(String(methodName), patten: patten!)
-//                    print(weight)
-//                    if weight > 0.01 {
-                        filtered.append(item.vimFormatItem())
-//                    }
-//                }
+                if item.descriptionKey?.hasPrefix("accessibility") == true {
+                    continue
+                }
+                filtered.append(item.vimFormatItem())
             }
         } else { // use this class
             print("empty prefix")
             for item in self {
-//                if item.context.hasSuffix("thisclass") {
-                    filtered.append(item.vimFormatItem())
-//                }
+                if item.descriptionKey?.hasPrefix("accessibility") == true {
+                    continue
+                }
+                filtered.append(item.vimFormatItem())
             }
         }
 
@@ -221,7 +218,7 @@ extension Array where Element == CodeCompletionItem {
 
 extension CodeCompletionItem {
     func vimFormatItem() -> [String: String] {
-        return ["word":sourcetext ?? "", "abbr":descriptionKey ?? "", "menu":""]
+        return ["word":sourcetext ?? "", "abbr":descriptionKey ?? ""]
     }
 }
 
