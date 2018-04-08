@@ -147,14 +147,14 @@ class Completer {
         guard let file = File(path: path) 
             else { return .failure(message: "Could not read file") }
 
-        var compilerArgsCopy = compilerArgs
-        compilerArgsCopy = compilerArgsCopy + [path]
+//        var compilerArgsCopy = compilerArgs
+//        compilerArgsCopy = compilerArgsCopy + [path]
         let contents = file.contents
         let request = Request.codeCompletionRequest(
                           file: path,
                           contents: contents,
                           offset: Int64(offset),
-                          arguments: compilerArgsCopy)
+                          arguments: compilerArgs)
       
         let response = CodeCompletionItem.parse(response: request.send())
         

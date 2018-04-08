@@ -45,10 +45,13 @@ public class CompletionServer {
 
     private func requestHandler(environ: [String: Any], startResponse: @escaping ((String, [(String, String)]) -> Void), sendBody: @escaping ((Data) -> Void)) {
         do {
+            startResponse("200 OK", [])
+            let loop = environ["embassy.event_loop"] as! EventLoop
             try routeRequest(environ: environ) { (returnResult) in
-                startResponse("200 OK", [])
-                sendBody(Data(returnResult.utf8))
-                sendBody(Data())
+                loop.call {
+                    sendBody(Data(returnResult.utf8))
+                    sendBody(Data())
+                }
             }
         } catch Abort.custom(status: let status, message: let message) {
             startResponse("\(status) BAD REQUEST", [])
@@ -148,6 +151,7 @@ extension CompletionServer {
         if let cache = self.caches[cacheKey] {
             print("target caches \(cacheKey)")
             response(cache.filter(prefixString).asJSONString())
+            return
         }
         
         let url = URL(fileURLWithPath: path)
@@ -155,47 +159,14 @@ extension CompletionServer {
         
         switch result {
         case .success(result: let items):
+            print("item count \(items.count)")
             if items.count > 0 {
-                
-                print("item count \(items.count)")
-                
                 caches[cacheKey] = items
                 cacheKeys.append(cacheKey)
                 if cacheKeys.count > 5 {
                     let key = cacheKeys.removeFirst()
                     caches.removeValue(forKey: key)
                 }
-                
-                /* TODO: figure crash reason
-                let queue = DispatchQueue(label: "com.sourcekittend.filter", attributes: .concurrent)
-                var i = 0
-                var endIndex = 0
-
-                let date = Date()
-                var total:[[String: String]] = []
-                while i < items.count {
-                    endIndex = i + 100
-                    if endIndex >= items.count {
-                        endIndex = items.count
-                    }
-                    print("filter \(i) - \(endIndex)")
-                    let subArr = Array(items[i..<endIndex])
-                    queue.async {
-                        let filtered = subArr.filter(prefixString)
-                        total.append(contentsOf: filtered)
-                    }
-                    i = endIndex
-                }
-                queue.async(flags: .barrier) {
-                    print("all work done")
-                    print("complete time: \(date.timeIntervalSinceNow)")
-//                    DispatchQueue.main.async {
-                        print("filter item count \(total.count)")
-                        response(total.asJSONString())
-//                    }
-                }
- */
-
                 let date = Date()
                 let filtered = items.filter(prefixString)
                 print("complete time: \(date.timeIntervalSinceNow)")
@@ -224,12 +195,12 @@ extension Array where Element == CodeCompletionItem {
     func filter(_ prefixString:String = "") -> [[String: String]] {
         
         var filtered: [[String: String]] = []
-//        let patten = initPattern(_getCharPointer(prefixString), UInt16(prefixString.lengthOfBytes(using: .utf8)))
         if prefixString != "" {
+            let patten = initPattern(_getCharPointer(prefixString), UInt16(prefixString.lengthOfBytes(using: .utf8)))
             for item in self {
-//                if let desc = item.descriptionKey {
-//                   let weight = _getWeight(desc, patten: patten!)
-                    //print(weight)
+//                if let desc = item.descriptionKey, let methodName = desc.split(separator: Character.init("(")).first {
+//                    let weight = _getWeight(String(methodName), patten: patten!)
+//                    print(weight)
 //                    if weight > 0.01 {
                         filtered.append(item.vimFormatItem())
 //                    }
@@ -238,9 +209,9 @@ extension Array where Element == CodeCompletionItem {
         } else { // use this class
             print("empty prefix")
             for item in self {
-                if item.context.hasSuffix("thisclass") {
+//                if item.context.hasSuffix("thisclass") {
                     filtered.append(item.vimFormatItem())
-                }
+//                }
             }
         }
 
